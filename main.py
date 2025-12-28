@@ -210,18 +210,17 @@ class Bot(commands.Bot):
 # --- DURUM DÖNGÜSÜ (Düzeltilmiş ve Güvenli) ---
     @tasks.loop(seconds=10)
     async def status_rotator(self):
-        # Hatanın çözümü: Bot hazır olana kadar bekle
+        # Hatanın kesin çözümü: Bot Discord'a tam bağlanana kadar bekle
         await self.wait_until_ready()
         
         try:
-            # WebSocket (ws) bağlantısı kurulmadan işlem yapma
+            # WebSocket bağlantısı o an kopuksa (None ise) işlem yapma
             if not self.ws:
                 return
 
             current_db = load_db()
             total_accounts = len(current_db.get("users", {}))
             
-            # Aktif oyun sayısını hesapla
             active_games_count = 0
             for uid, sess in active_sessions.items():
                 if sess.get("process") and sess["process"].poll() is None:
@@ -235,13 +234,14 @@ class Bot(commands.Bot):
             
             status_text = statuses[self.status_index]
             
-            # Yayıncı durumunu ayarla
+            # Yayıncı durumunu ayarla (Mor ikon)
             await self.change_presence(activity=discord.Streaming(name=status_text, url=STREAM_URL))
             
-            # Endeksi bir artır (Sıradaki duruma geç)
+            # Sonraki duruma geç
             self.status_index = (self.status_index + 1) % len(statuses)
         except Exception as e:
-            print(f"Döngü hatası engellendi: {e}")
+            # Bir hata olursa loglarda ne olduğunu görebilmen için:
+            print(f"Durum döngüsü hatası engellendi: {e}")
 
 bot = Bot()
 
@@ -422,4 +422,5 @@ async def admin_unban(interaction: discord.Interaction, user: discord.User):
 
 if __name__ == "__main__":
     bot.run(TOKEN)
+
 
