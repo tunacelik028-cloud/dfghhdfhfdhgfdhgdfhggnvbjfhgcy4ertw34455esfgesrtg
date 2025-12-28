@@ -30,21 +30,27 @@ def save_db(data):
         json.dump(data, f, indent=4)
 
 def format_duration_detailed(seconds):
-    if not seconds or seconds < 0: return "Hesaplanıyor..."
+    if not seconds or seconds < 0: return "Veri Bekleniyor..."
     seconds = int(seconds)
+    
+    # Zaman birimleri hesaplaması
     months, seconds = divmod(seconds, 2592000)
+    weeks, seconds = divmod(seconds, 604800)
     days, seconds = divmod(seconds, 86400)
     hours, seconds = divmod(seconds, 3600)
     minutes, seconds = divmod(seconds, 60)
     
     parts = []
-    if months > 0: parts.append(f"**{months}** Ay")
-    if days > 0: parts.append(f"**{days}** Gün")
-    if hours > 0: parts.append(f"**{hours}** Saat")
-    if minutes > 0: parts.append(f"**{minutes}** Dk")
-    parts.append(f"**{seconds}** Sn")
+    # Rakamlar büyüdükçe listeye eklenir
+    if months > 0: parts.append(f"{months} Ay")
+    if weeks > 0: parts.append(f"{weeks} Hafta")
+    if days > 0: parts.append(f"{days} Gün")
+    if hours > 0: parts.append(f"{hours} Saat")
+    if minutes > 0: parts.append(f"{minutes} Dk")
+    if seconds >= 0 or not parts: parts.append(f"{seconds} Sn")
     
-    return ", ".join(parts)
+    # Aralarına nokta koyarak birleştirir (Örn: 2 Gün.3 Saat.12 Sn)
+    return ".".join(parts)
 
 db = load_db()
 active_sessions = {}
@@ -310,33 +316,41 @@ async def liste(interaction: discord.Interaction):
     uid = str(interaction.user.id)
     sess = active_sessions.get(uid)
     
-    # Canlı bellekte veri yoksa DB'den kontrol et
     db_internal = load_db()
-    st = sess["start_time"] if sess and sess["start_time"] else db_internal["users"].get(uid, {}).get("start_time")
+    st = sess["start_time"] if sess and sess.get("start_time") else db_internal["users"].get(uid, {}).get("start_time")
     games = db_internal["users"].get(uid, {}).get("games", [])
 
     if not sess and not st:
         await interaction.response.send_message("❌ **Hata:** Aktif bir bulut oturumu bulunamadı.", ephemeral=True); return
 
-    time_str = format_duration_detailed(time.time() - st) if st else "Hesaplanıyor..."
+    # Zaman hesaplama
+    time_str = format_duration_detailed(time.time() - st) if st else "Bağlanıyor..."
 
-    embed = discord.Embed(title="📊 Oturum İstatistikleri", color=0xe91e63)
+    embed = discord.Embed(title="📊 Bulut Oturum Paneli", color=0xe91e63)
     embed.set_thumbnail(url=interaction.user.display_avatar.url)
     
-    desc = "```ansi\n\u001b[1;36m ID      | DURUM\u001b[0m\n"
+    # Yeni Tablo Görünümü (ID | DURUM | ZAMAN)
+    # ANSI kodları ile renklendirilmiş profesyonel tablo
+    desc = "```ansi\n"
+    desc += "\u001b[1;36m ID      | DURUM  | ZAMAN\u001b[0m\n"
+    desc += "\u001b[0;30m---------+--------+------------------\u001b[0m\n"
+    
     if games:
         for gid in games:
-            desc += f" {str(gid).ljust(7)} | \u001b[1;32mAktif\u001b[0m\n"
+            # Her oyun için ID, Aktif Durumu ve çalışma süresi eklenir
+            status_col = "\u001b[1;32mAktif\u001b[0m"
+            desc += f" {str(gid).ljust(7)} | {status_col}  | {time_str}\n"
     else:
-        desc += " YOK      | -\n"
+        desc += " YOK      | -      | -\n"
     desc += "```"
     
-    embed.add_field(name="🎮 Oyun Yapılandırması", value=desc, inline=False)
-    embed.add_field(name="⏱️ Toplam Çalışma Süresi", value=f"> {time_str}", inline=False)
+    embed.add_field(name="🎮 Aktif İşlemler", value=desc, inline=False)
     
+    # Alt tarafa hızlı özet
     status_emoji = "🟢" if st else "🟠"
-    status_text = "Online (Veri Akışı Var)" if st else "Bağlanıyor..."
-    embed.add_field(name="📡 Sunucu Durumu", value=f"{status_emoji} {status_text}", inline=True)
+    status_text = "Sunucu Online" if st else "Bağlantı Kuruluyor..."
+    embed.add_field(name="📡 Sistem", value=f"{status_emoji} {status_text}", inline=True)
+    embed.add_field(name="👤 Kullanıcı", value=f"`{db_internal['users'].get(uid, {}).get('username', 'Bilinmiyor')}`", inline=True)
     
     if st:
          embed.set_footer(text=f"Oturum Başlangıcı: {datetime.datetime.fromtimestamp(st).strftime('%d.%m.%Y %H:%M')}")
@@ -422,5 +436,6 @@ async def admin_unban(interaction: discord.Interaction, user: discord.User):
 
 if __name__ == "__main__":
     bot.run(TOKEN)
+
 
 
