@@ -202,7 +202,7 @@ bot = Bot()
 async def on_ready():
     print(f"{bot.user} Hazır.")
     # YAYIN YAPIYOR STATUSU
-    await bot.change_presence(activity=discord.Streaming(name="Siteam Cloud Systems", url=STREAM_URL))
+    await bot.change_presence(activity=discord.Streaming(name="By Leux", url=STREAM_URL))
     
     ch = bot.get_channel(INFO_CHANNEL_ID)
     if ch:
@@ -210,7 +210,7 @@ async def on_ready():
             await ch.purge(limit=10)
             
             # --- PROFESYONEL BİLGİ KARTI ---
-            embed = discord.Embed(title="☁️ Siteam Profesyonel Saat Kasma Servisi", description="**Siteam Cloud**, bilgisayarınız kapalıyken bile oyun saatinizi artıran, yeni nesil bulut tabanlı bir otomasyon sistemidir.", color=0x5865F2)
+            embed = discord.Embed(title="☁️ Steam Profesyonel Saat Kasma Servisi", description="**Steam Cloud**, bilgisayarınız kapalıyken bile oyun saatinizi artıran, yeni nesil bulut tabanlı bir otomasyon sistemidir.", color=0x5865F2)
             
             embed.add_field(name="🖥️ Sistem Mimarisi", value="Sistemimiz, 7/24 aktif kalan yüksek performanslı sunucular üzerinde çalışır. Siz uyurken, okuldayken veya işteyken hesabınız **Online** kalır ve saatiniz artmaya devam eder.", inline=False)
             
@@ -229,7 +229,7 @@ async def on_ready():
                             value="Kasmak istediğiniz oyunun Steam Mağaza linkindeki numaradır.\n"
                                   "*Örnek:* `store.steampowered.com/app/730/...` -> **730** (CS2)", inline=False)
 
-            embed.set_footer(text="Siteam Systems © 2025 | Yüksek Performanslı Bulut Çözümleri")
+            embed.set_footer(text="Steam Systems © 2025 | Yüksek Performanslı Bulut Çözümleri")
             embed.set_thumbnail(url="https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/2048px-Steam_icon_logo.svg.png")
             # embed.set_image KISMI SİLİNDİ, HATASIZ TEMİZ GÖRÜNÜM
             
@@ -255,7 +255,7 @@ async def yardim(interaction: discord.Interaction):
     if interaction.user.id == ADMIN_ID:
         embed.add_field(name="🛡️ Yönetici Paneli", value="`/admin_ban`, `/admin_unban`, `/admin_oyun`", inline=False)
         
-    embed.set_footer(text="Siteam Cloud | Komut Sistemi")
+    embed.set_footer(text="Steam Cloud | Komut Sistemi")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="liste", description="Oturum detaylarını ve istatistikleri gösterir.")
@@ -405,4 +405,5 @@ async def admin_oyun(interaction: discord.Interaction, user: discord.User, idler
 if __name__ == "__main__":
 
     bot.run(TOKEN)
+
 
