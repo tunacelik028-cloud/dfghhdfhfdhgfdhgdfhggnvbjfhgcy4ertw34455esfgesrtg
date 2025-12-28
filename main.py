@@ -207,10 +207,17 @@ class Bot(commands.Bot):
             self.status_rotator.start()
         await self.tree.sync()
 
-    # --- DURUM DÖNGÜSÜ (Yayın Yapıyor Modu) ---
+# --- DURUM DÖNGÜSÜ (Düzeltilmiş ve Güvenli) ---
     @tasks.loop(seconds=10)
     async def status_rotator(self):
+        # Hatanın çözümü: Bot hazır olana kadar bekle
+        await self.wait_until_ready()
+        
         try:
+            # WebSocket (ws) bağlantısı kurulmadan işlem yapma
+            if not self.ws:
+                return
+
             current_db = load_db()
             total_accounts = len(current_db.get("users", {}))
             
@@ -227,9 +234,14 @@ class Bot(commands.Bot):
             ]
             
             status_text = statuses[self.status_index]
+            
+            # Yayıncı durumunu ayarla
             await self.change_presence(activity=discord.Streaming(name=status_text, url=STREAM_URL))
+            
+            # Endeksi bir artır (Sıradaki duruma geç)
             self.status_index = (self.status_index + 1) % len(statuses)
-        except: pass
+        except Exception as e:
+            print(f"Döngü hatası engellendi: {e}")
 
 bot = Bot()
 
@@ -410,3 +422,4 @@ async def admin_unban(interaction: discord.Interaction, user: discord.User):
 
 if __name__ == "__main__":
     bot.run(TOKEN)
+
