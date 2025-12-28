@@ -9,12 +9,14 @@ import time
 import sys
 import datetime
 import random
+import re
 
 # --- AYARLAR ---
 TOKEN = os.getenv("DISCORD_TOKEN")
 ADMIN_ID = 1274031255662628925
 INFO_CHANNEL_ID = 1454624165222154475
 CMD_CHANNEL_ID = 1454627700978483302
+ID_GUIDE_CHANNEL_ID = 1454803773527429121 # ID Öğrenme kanalı
 DB_FILE = "users_db.json"
 STREAM_URL = "https://www.twitch.tv/leux" 
 
@@ -29,17 +31,14 @@ def save_db(data):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
-# --- İSTEDİĞİN ÖZEL ZAMAN FORMATI (Noktalı ve Dinamik) ---
 def format_duration_detailed(seconds):
     if not seconds or seconds < 0: return "Bağlanıyor..."
     seconds = int(seconds)
-    
     months, seconds = divmod(seconds, 2592000)
     weeks, seconds = divmod(seconds, 604800)
     days, seconds = divmod(seconds, 86400)
     hours, seconds = divmod(seconds, 3600)
     minutes, seconds = divmod(seconds, 60)
-    
     parts = []
     if months > 0: parts.append(f"{months} Ay")
     if weeks > 0: parts.append(f"{weeks} Hafta")
@@ -47,7 +46,6 @@ def format_duration_detailed(seconds):
     if hours > 0: parts.append(f"{hours} Saat")
     if minutes > 0: parts.append(f"{minutes} Dk")
     if seconds >= 0 or not parts: parts.append(f"{seconds} Sn")
-    
     return ".".join(parts)
 
 db = load_db()
@@ -58,25 +56,13 @@ def start_steam_bot(user_id, username, password, game_ids):
     if not os.path.exists("steam_worker.py"):
         print("[KRİTİK HATA] Worker dosyası bulunamadı!")
         return
-
     gids_str = ",".join(map(str, game_ids))
     cmd = [sys.executable, "-u", "steam_worker.py", str(user_id), username, password, gids_str]
-    
     try:
-        process = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
-            text=True, encoding='utf-8', errors='replace', bufsize=1 
-        )
-        
-        active_sessions[str(user_id)] = {
-            "process": process, "last_msg": "Sunucuya bağlanılıyor...", "start_time": None
-        }
-        
-        t = threading.Thread(target=monitor_output, args=(str(user_id), process), daemon=True)
-        t.start()
-        
-    except Exception as e:
-        print(f"[PROCESS ERROR] {e}")
+        process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', bufsize=1)
+        active_sessions[str(user_id)] = {"process": process, "last_msg": "Sunucuya bağlanılıyor...", "start_time": None}
+        threading.Thread(target=monitor_output, args=(str(user_id), process), daemon=True).start()
+    except Exception as e: print(f"[PROCESS ERROR] {e}")
 
 def monitor_output(user_id, process):
     while True:
@@ -84,28 +70,14 @@ def monitor_output(user_id, process):
             line = process.stdout.readline()
             if not line: break
             clean_line = line.strip()
-            print(f"[WORKER-{user_id}] {clean_line}")
-
-            # GÜNCELLEME: Aşağıdaki kelimelerden biri logda geçerse saati başlatır
             onay_kelimeleri = ["başarılı", "açıldı", "çalışıyor", "aktif", "ok"]
-            
-            if any(k in clean_line.lower() for k in onay_kelimeleri) or clean_line.startswith("{"):
+            if any(k in clean_line.lower() for k in onay_kelimeleri):
                 ts = int(time.time())
-                
-                # Önce bellekteki oturumu güncelle
-                if user_id in active_sessions:
-                    active_sessions[user_id]["start_time"] = ts
-                
-                # Sonra veritabanını (JSON) güncelle
+                if user_id in active_sessions: active_sessions[user_id]["start_time"] = ts
                 db_int = load_db()
-                if user_id in db_int["users"]:
-                    # Sadece null ise güncelle ki her logda başa dönmesin
-                    if db_int["users"][user_id].get("start_time") is None:
-                        db_int["users"][user_id]["start_time"] = ts
-                        save_db(db_int)
-                        print(f">>> [SİSTEM] {user_id} için sayaç null'dan kurtarıldı ve başlatıldı!")
-
-            # Log mesajlarını arayüze ilet
+                if user_id in db_int["users"] and db_int["users"][user_id].get("start_time") is None:
+                    db_int["users"][user_id]["start_time"] = ts
+                    save_db(db_int)
             if clean_line.startswith("{"):
                 try:
                     data = json.loads(clean_line)
@@ -119,84 +91,51 @@ def send_command_to_worker(user_id, command):
         proc = active_sessions[user_id]["process"]
         if proc.poll() is None:
             try:
-                proc.stdin.write(command + "\n")
-                proc.stdin.flush()
+                proc.stdin.write(command + "\n"); proc.stdin.flush()
                 return True
             except: pass
     return False
 
-# ====================================================
-#  PROFESYONEL ARAYÜZ (Discord UI)
-# ====================================================
-
+# --- ARAYÜZ ---
 class CodeModal(discord.ui.Modal, title="🔐 Güvenlik Doğrulaması"):
-    code = discord.ui.TextInput(label="Steam Guard Kodu", placeholder="Email veya Mobil uygulamanızdaki kodu girin", max_length=10)
+    def __init__(self, user_id):
+        super().__init__()
+        self.user_id = user_id
+    code = discord.ui.TextInput(label="Steam Guard Kodu", placeholder="Kodu buraya girin", max_length=10)
     async def on_submit(self, interaction: discord.Interaction):
-        uid = str(interaction.user.id)
-        if uid in active_sessions:
-            send_command_to_worker(uid, f"CODE:{self.code.value}")
-            embed = discord.Embed(description="✅ **Kod şifrelenerek sunucuya iletildi.**\nLütfen doğrulama işleminin tamamlanması için aşağıdaki paneli yenileyin.", color=0x2ecc71)
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+        if send_command_to_worker(self.user_id, f"CODE:{self.code.value}"):
+            await interaction.response.send_message("✅ **Kod şifrelenerek sunucuya iletildi.**\nLütfen doğrulama işlemi için paneli yenileyin.", ephemeral=True)
         else:
-            await interaction.response.send_message("❌ **Hata:** Aktif bir oturum protokolü bulunamadı.", ephemeral=True)
+            await interaction.response.send_message("❌ **Hata:** Aktif bir oturum bulunamadı.", ephemeral=True)
 
 class LoginCheckView(discord.ui.View):
     def __init__(self, user_id):
         super().__init__(timeout=None)
         self.user_id = user_id
-
     @discord.ui.button(label="Güvenlik Kodu Gir", style=discord.ButtonStyle.primary, emoji="🛡️", custom_id="code_btn", disabled=True)
     async def code_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(CodeModal())
-
+        await interaction.response.send_modal(CodeModal(self.user_id))
     @discord.ui.button(label="Durumu Kontrol Et", style=discord.ButtonStyle.secondary, emoji="🔄", custom_id="refresh")
     async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
         sess = active_sessions.get(self.user_id)
-        if not sess:
-            await interaction.response.edit_message(content="❌ **Oturum Sonlandırıldı.**\nGüvenlik nedeniyle bağlantı kesilmiş olabilir.", view=None); return
-
+        if not sess: await interaction.response.edit_message(content="❌ **Oturum Sonlandırıldı.**", view=None); return
         st = sess["last_msg"]
-        
         if "KOD GEREKLİ" in st:
             self.children[0].disabled = False
-            embed = discord.Embed(title="⚠️ Doğrulama Bekleniyor", description="Steam sunucuları hesabınıza erişim için **İki Faktörlü Kimlik Doğrulama (2FA)** talep ediyor.\n\nLütfen **'Güvenlik Kodu Gir'** butonunu kullanarak kodu iletin.", color=0xf1c40f)
-            await interaction.response.edit_message(content=None, embed=embed, view=self)
-        
-        elif "Aktif" in st or "Çevrimiçi" in st or "Başarılı" in st or "Oturum Açıldı" in st:
-            embed = discord.Embed(title="✅ Bağlantı Kuruldu", description="Bulut sunucusu hesabınıza başarıyla bağlandı ve işlem başladı.\n\n👉 **Yönetim Paneli:** <#1454627700978483302>", color=0x2ecc71)
-            embed.add_field(name="Son Log", value=f"`{st}`", inline=False)
-            await interaction.response.edit_message(content=None, embed=embed, view=None)
-        
-        else:
-            self.children[0].disabled = True
-            embed = discord.Embed(description=f"ℹ️ **Sistem Durumu:** `{st}`\n*Sunucu yanıt veriyor, lütfen bekleyin...*", color=0x3498db)
-            await interaction.response.edit_message(content=None, embed=embed, view=self)
+            await interaction.response.edit_message(embed=discord.Embed(title="⚠️ Doğrulama Bekleniyor", description=st, color=0xf1c40f), view=self)
+        else: await interaction.response.edit_message(content=f"ℹ️ **Sistem Durumu:** `{st}`", view=self)
 
 class LoginModal(discord.ui.Modal, title="☁️ Bulut Oturum Başlatma"):
     username = discord.ui.TextInput(label="Kullanıcı Adı", placeholder="Steam kullanıcı adınızı girin")
     password = discord.ui.TextInput(label="Şifre", placeholder="Güvenli giriş için şifreniz")
     game_ids = discord.ui.TextInput(label="Oyun Yapılandırması (ID)", required=False, placeholder="Örn: 730, 440")
-
     async def on_submit(self, interaction: discord.Interaction):
-        uid = str(interaction.user.id)
-        db_internal = load_db()
-        if uid in db_internal["banned"]:
-             await interaction.response.send_message("⛔ **Erişim Reddedildi:** Hesabınız sistem yöneticisi tarafından askıya alınmıştır.", ephemeral=True); return
-
-        if uid in active_sessions:
-            try: active_sessions[uid]["process"].kill()
-            except: pass
-        
-        raw_ids = self.game_ids.value
-        gids = [int(x.strip()) for x in raw_ids.split(",") if x.strip().isdigit()] if raw_ids else [730]
-
-        db_internal["users"][uid] = {"username": self.username.value, "password": self.password.value, "games": gids, "start_time": None}
-        save_db(db_internal)
-        
-        start_steam_bot(uid, self.username.value, self.password.value, gids)
-        
-        embed = discord.Embed(title="🚀 Sunucu Başlatılıyor", description="İsteğiniz işleme alındı ve sanal sunucu (VPS) üzerinde oturumunuz hazırlanıyor.\n\nLütfen aşağıdaki panelden süreci takip edin.", color=0x9b59b6)
-        await interaction.response.send_message(embed=embed, view=LoginCheckView(uid), ephemeral=True)
+        uid = str(interaction.user.id); db_int = load_db()
+        if uid in db_int["banned"]: await interaction.response.send_message("⛔ **Erişim Reddedildi.**", ephemeral=True); return
+        gids = [int(x.strip()) for x in self.game_ids.value.split(",") if x.strip().isdigit()] if self.game_ids.value else [730]
+        db_int["users"][uid] = {"username": self.username.value, "password": self.password.value, "games": gids, "start_time": None}
+        save_db(db_int); start_steam_bot(uid, self.username.value, self.password.value, gids)
+        await interaction.response.send_message("🚀 **Sunucu Başlatılıyor...**", view=LoginCheckView(uid), ephemeral=True)
 
 class MainView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
@@ -208,107 +147,106 @@ class Bot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=discord.Intents.all())
         self.status_index = 0
-
     async def setup_hook(self):
-        self.add_view(MainView())
-        if not self.status_rotator.is_running():
-            self.status_rotator.start()
-        await self.tree.sync()
-
-    # --- DURUM DÖNGÜSÜ (Yayın Yapıyor) ---
+        self.add_view(MainView()); self.status_rotator.start(); await self.tree.sync()
     @tasks.loop(seconds=10)
     async def status_rotator(self):
         await self.wait_until_ready()
         try:
-            if not self.ws: return
-            current_db = load_db()
-            total_accounts = len(current_db.get("users", {}))
-            active_games_count = sum(len(u.get("games", [])) for u in active_sessions.values() if u.get("process").poll() is None)
-
-            statuses = ["By Leux", f"👤 Toplam Hesap: {total_accounts}", f"🎮 Aktif Oyun: {active_games_count}"]
-            status_text = statuses[self.status_index]
-            await self.change_presence(activity=discord.Streaming(name=status_text, url=STREAM_URL))
-            self.status_index = (self.status_index + 1) % len(statuses)
+            db_c = load_db(); total = len(db_c.get("users", {})); act = sum(1 for u in active_sessions.values() if u.get("process").poll() is None)
+            st_list = ["By Leux", f"👤 Toplam Hesap: {total}", f"🎮 Aktif Oyun: {act}"]
+            await self.change_presence(activity=discord.Streaming(name=st_list[self.status_index], url=STREAM_URL))
+            self.status_index = (self.status_index + 1) % len(st_list)
         except: pass
 
 bot = Bot()
 
+# --- TÜM KOMUTLAR ---
+@bot.tree.command(name="idogren", description="Steam oyununun ID'sini öğrenin.")
+async def idogren(interaction: discord.Interaction, sorgu: str):
+    appid = None
+    if "store.steampowered.com/app/" in sorgu:
+        match = re.search(r"app/(\d+)", sorgu)
+        if match: appid = match.group(1)
+    elif sorgu.isdigit(): appid = sorgu
+    
+    if appid: await interaction.response.send_message(f"🔍 Aradığınız oyunun ID'si: `{appid}`", ephemeral=True)
+    else: await interaction.response.send_message(f"ℹ️ Sonuç: Lütfen tam Steam mağaza linkini yapıştırın. (Örn: CS2 için 730)", ephemeral=True)
+
+@bot.tree.command(name="liste", description="Oturum detaylarını ve istatistikleri gösterir.")
+async def liste(interaction: discord.Interaction):
+    if not check_channel(interaction): await interaction.response.send_message(f"🚫 Sadece <#{CMD_CHANNEL_ID}> kanalında çalışır.", ephemeral=True); return
+    uid = str(interaction.user.id); sess = active_sessions.get(uid); db_i = load_db()
+    st = sess["start_time"] if sess and sess.get("start_time") else db_i["users"].get(uid, {}).get("start_time")
+    games = db_i["users"].get(uid, {}).get("games", [])
+    if not sess and not st: await interaction.response.send_message("❌ Aktif oturum yok.", ephemeral=True); return
+    t_str = format_duration_detailed(time.time() - st) if st else "Bağlanıyor..."
+    desc = "```ansi\n\u001b[1;36m ID      | DURUM  | ZAMAN\u001b[0m\n\u001b[0;30m---------+--------+------------------\u001b[0m\n"
+    for gid in games: desc += f" {str(gid).ljust(7)} | \u001b[1;32mAktif\u001b[0m  | {t_str}\n"
+    desc += "```"
+    embed = discord.Embed(title="📊 Bulut Oturum Paneli", color=0xe91e63)
+    embed.add_field(name="🎮 Aktif İşlemler", value=desc, inline=False)
+    embed.add_field(name="📡 Sistem", value="🟢 Online" if st else "🟠 Bağlanıyor...", inline=True)
+    embed.add_field(name="👤 Kullanıcı", value=f"`{db_i['users'].get(uid, {}).get('username', 'Bilinmiyor')}`", inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="oyun_ekle", description="Mevcut oturumunuza yeni bir oyun ekler.")
+async def oyun_ekle(interaction: discord.Interaction, appid: int):
+    uid = str(interaction.user.id); db_i = load_db()
+    if uid not in db_i["users"]: await interaction.response.send_message("❌ Kayıt bulunamadı.", ephemeral=True); return
+    if appid not in db_i["users"][uid]["games"]:
+        db_i["users"][uid]["games"].append(appid); save_db(db_i)
+        send_command_to_worker(uid, f"UPDATE:{','.join(map(str, db_i['users'][uid]['games']))}")
+        await interaction.response.send_message(f"✅ **{appid}** başarıyla eklendi.", ephemeral=True)
+
+@bot.tree.command(name="oyun_cikar", description="Listenizden oyun çıkartır.")
+async def oyun_cikar(interaction: discord.Interaction, appid: int):
+    uid = str(interaction.user.id); db_i = load_db()
+    if uid in db_i["users"] and appid in db_i["users"][uid]["games"]:
+        db_i["users"][uid]["games"].remove(appid); save_db(db_i)
+        send_command_to_worker(uid, f"UPDATE:{','.join(map(str, db_i['users'][uid]['games']))}")
+        await interaction.response.send_message(f"🗑️ **{appid}** başarıyla çıkarıldı.", ephemeral=True)
+
+@bot.tree.command(name="durum", description="Anlık process durumunu gösterir.")
+async def durum(interaction: discord.Interaction):
+    uid = str(interaction.user.id); sess = active_sessions.get(uid)
+    if not sess: await interaction.response.send_message("❌ Aktif değilsin.", ephemeral=True); return
+    await interaction.response.send_message(embed=discord.Embed(description=f"📝 **Log:** `{sess['last_msg']}`", color=0x95a5a6), ephemeral=True)
+
+@bot.tree.command(name="cikis", description="Oturumu kapatır.")
+async def cikis(interaction: discord.Interaction):
+    uid = str(interaction.user.id)
+    if uid in active_sessions:
+        active_sessions[uid]["process"].kill(); del active_sessions[uid]
+        db_i = load_db(); db_i["users"][uid]["start_time"] = None; save_db(db_i)
+        await interaction.response.send_message("👋 Oturum kapatıldı.", ephemeral=True)
+
+def check_channel(interaction): return interaction.channel_id == CMD_CHANNEL_ID
+
 @bot.event
 async def on_ready():
     print(f"{bot.user} Hazır.")
+    # Ana Bilgi Kanalı
     ch = bot.get_channel(INFO_CHANNEL_ID)
     if ch:
         try:
             await ch.purge(limit=10)
-            embed = discord.Embed(title="☁️ Steam Profesyonel Saat Kasma Servisi", description="**Steam Cloud**, bilgisayarınız kapalıyken bile oyun saatinizi artıran bulut tabanlı bir otomasyon sistemidir.", color=0x5865F2)
-            embed.add_field(name="🖥️ Sistem Mimarisi", value="Sistemimiz, 7/24 aktif kalan yüksek performanslı sunucular üzerinde çalışır. Siz uyurken, okuldayken veya işteyken hesabınız **Online** kalır.", inline=False)
+            embed = discord.Embed(title="☁️ Steam Profesyonel Saat Kasma Servisi", description="**Steam Cloud**, bilgisayarınız kapalıyken bile oyun saatinizi artıran bulut tabanlı bir sistemdir.", color=0x5865F2)
+            embed.add_field(name="🖥️ Sistem Mimarisi", value="Sistemimiz, 7/24 aktif kalan yüksek performanslı sunucular üzerinde çalışır. Siz uyurken hesabınız **Online** kalır.", inline=False)
             embed.add_field(name="🛡️ Güvenlik Protokolleri", value="🔒 **End-to-End Şifreleme:** Bilgileriniz güvenle saklanır.\n✅ **Steam Guard Desteği:** 2FA ile tam uyumludur.", inline=False)
             embed.add_field(name="📋 Kullanım Kılavuzu", value="1️⃣ **Oturum Aç:** Aşağıdaki butona tıklayın.\n2️⃣ **Yapılandırma:** Bilgilerinizi girin.\n3️⃣ **Doğrulama:** Sorulursa, Guard kodunuzu girin.", inline=False)
-            embed.set_footer(text="Steam Systems © 2025 | Yüksek Performanslı Bulut Çözümleri")
             embed.set_thumbnail(url="https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/2048px-Steam_icon_logo.svg.png")
             await ch.send(embed=embed, view=MainView())
         except: pass
-
-# --- KULLANICI KOMUTLARI ---
-def check_channel(interaction: discord.Interaction):
-    return interaction.channel_id == CMD_CHANNEL_ID
-
-@bot.tree.command(name="liste", description="Oturum detaylarını ve istatistikleri gösterir.")
-async def liste(interaction: discord.Interaction):
-    if not check_channel(interaction):
-        await interaction.response.send_message(f"🚫 Bu terminalde kullanılamaz.", ephemeral=True); return
-
-    uid = str(interaction.user.id)
-    sess = active_sessions.get(uid)
-    db_internal = load_db()
-    st = sess["start_time"] if sess and sess.get("start_time") else db_internal["users"].get(uid, {}).get("start_time")
-    games = db_internal["users"].get(uid, {}).get("games", [])
-
-    if not sess and not st:
-        await interaction.response.send_message("❌ Aktif oturum yok.", ephemeral=True); return
-
-    current_time_str = format_duration_detailed(time.time() - st) if st else "Bağlanıyor..."
-
-    embed = discord.Embed(title="📊 Bulut Oturum Paneli", color=0xe91e63)
-    embed.set_thumbnail(url=interaction.user.display_avatar.url)
     
-    # --- İSTEDİĞİN 3 SÜTUNLU TABLO (ID | DURUM | ZAMAN) ---
-    desc = "```ansi\n"
-    desc += "\u001b[1;36m ID      | DURUM  | ZAMAN\u001b[0m\n"
-    desc += "\u001b[0;30m---------+--------+------------------\u001b[0m\n"
-    
-    if games:
-        for gid in games:
-            desc += f" {str(gid).ljust(7)} | \u001b[1;32mAktif\u001b[0m  | {current_time_str}\n"
-    else:
-        desc += " YOK     | -      | -\n"
-    desc += "```"
-    
-    embed.add_field(name="🎮 Aktif İşlemler", value=desc, inline=False)
-    embed.add_field(name="📡 Sistem", value="🟢 Online" if st else "🟠 Bağlanıyor...", inline=True)
-    embed.add_field(name="👤 Kullanıcı", value=f"`{db_internal['users'].get(uid, {}).get('username', 'Bilinmiyor')}`", inline=True)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    # ID Öğrenme Kanalı
+    g_ch = bot.get_channel(ID_GUIDE_CHANNEL_ID)
+    if g_ch:
+        try:
+            await g_ch.purge(limit=10)
+            embed = discord.Embed(title="🔍 Oyun ID'sini Nasıl Öğrenirim?", color=0x3498db)
+            embed.description = "Kasmak istediğiniz oyunun ID'sini öğrenmek için aşağıdaki komutu kullanabilirsiniz:\n\n👉 `/idogren (oyun ismi veya linki)`\n\n*Not: Bot size özel olarak (fısıldayarak) yanıt verecektir.*"
+            await g_ch.send(embed=embed)
+        except: pass
 
-@bot.tree.command(name="durum", description="Anlık process durumunu gösterir.")
-async def durum(interaction: discord.Interaction):
-    if not check_channel(interaction): return
-    uid = str(interaction.user.id)
-    if uid not in active_sessions: await interaction.response.send_message("❌ Aktif değilsin.", ephemeral=True); return
-    msg = active_sessions[uid]["last_msg"]
-    await interaction.response.send_message(embed=discord.Embed(description=f"**📝 Sistem Logu:**\n`{msg}`", color=0x95a5a6), ephemeral=True)
-
-@bot.tree.command(name="cikis", description="Oturumu kapatır.")
-async def cikis(interaction: discord.Interaction):
-    if not check_channel(interaction): return
-    uid = str(interaction.user.id)
-    if uid in active_sessions:
-        active_sessions[uid]["process"].kill()
-        del active_sessions[uid]
-        db_int = load_db()
-        if uid in db_int["users"]: db_int["users"][uid]["start_time"] = None; save_db(db_int)
-        await interaction.response.send_message("👋 Oturum kapatıldı.", ephemeral=True)
-
-if __name__ == "__main__":
-    bot.run(TOKEN)
-
-
+if __name__ == "__main__": bot.run(TOKEN)
