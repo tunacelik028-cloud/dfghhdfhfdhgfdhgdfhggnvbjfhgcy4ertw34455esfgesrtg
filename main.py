@@ -86,23 +86,32 @@ def monitor_output(user_id, process):
             clean_line = line.strip()
             print(f"[WORKER-{user_id}] {clean_line}")
 
+            # GÜNCELLEME: Aşağıdaki kelimelerden biri logda geçerse saati başlatır
+            onay_kelimeleri = ["başarılı", "açıldı", "çalışıyor", "aktif", "ok"]
+            
+            if any(k in clean_line.lower() for k in onay_kelimeleri) or clean_line.startswith("{"):
+                ts = int(time.time())
+                
+                # Önce bellekteki oturumu güncelle
+                if user_id in active_sessions:
+                    active_sessions[user_id]["start_time"] = ts
+                
+                # Sonra veritabanını (JSON) güncelle
+                db_int = load_db()
+                if user_id in db_int["users"]:
+                    # Sadece null ise güncelle ki her logda başa dönmesin
+                    if db_int["users"][user_id].get("start_time") is None:
+                        db_int["users"][user_id]["start_time"] = ts
+                        save_db(db_int)
+                        print(f">>> [SİSTEM] {user_id} için sayaç null'dan kurtarıldı ve başlatıldı!")
+
+            # Log mesajlarını arayüze ilet
             if clean_line.startswith("{"):
-                data = json.loads(clean_line)
-                if data["type"] == "STATUS":
-                    msg = data["msg"]
-                    active_sessions[user_id]["last_msg"] = msg
-                    
-                    # DAHA HASSAS KONTROL: Eğer Steam oyuna girdiyse saati başlat
-                    if any(x in msg for x in ["Giriş başarılı", "Oturum açıldı", "Aktif oyun"]):
-                        ts = int(time.time())
-                        # Bellekte güncelle
-                        active_sessions[user_id]["start_time"] = ts
-                        # Veritabanında güncelle
-                        db_int = load_db()
-                        if user_id in db_int["users"] and db_int["users"][user_id]["start_time"] is None:
-                            db_int["users"][user_id]["start_time"] = ts
-                            save_db(db_int)
-                            print(f"[SİSTEM] {user_id} için zaman sayacı başlatıldı.")
+                try:
+                    data = json.loads(clean_line)
+                    if data.get("type") == "STATUS" and user_id in active_sessions:
+                        active_sessions[user_id]["last_msg"] = data["msg"]
+                except: pass
         except: break
 
 def send_command_to_worker(user_id, command):
@@ -301,4 +310,5 @@ async def cikis(interaction: discord.Interaction):
 
 if __name__ == "__main__":
     bot.run(TOKEN)
+
 
