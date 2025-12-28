@@ -12,7 +12,7 @@ import datetime
 import random
 
 # --- AYARLAR ---
-TOKEN = "MTQ1NDYyNjkyNjA4MDgxOTM0MQ.Ggovmv.eN-FhR5zONBq8YQ18vKqOuvp7jmiG1RlHiDntg"
+TOKEN = "DISCORD_TOKEN"
 ADMIN_ID = 1274031255662628925
 INFO_CHANNEL_ID = 1454624165222154475
 CMD_CHANNEL_ID = 1454627700978483302
@@ -403,4 +403,5 @@ async def admin_oyun(interaction: discord.Interaction, user: discord.User, idler
     except: await interaction.response.send_message("❌ Hata.", ephemeral=True)
 
 if __name__ == "__main__":
+
     bot.run(TOKEN)
