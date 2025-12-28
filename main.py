@@ -17,7 +17,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 ADMIN_ID = 1274031255662628925
 INFO_CHANNEL_ID = 1454624165222154475
 CMD_CHANNEL_ID = 1454627700978483302
-ID_GUIDE_CHANNEL_ID = 1454803773527429121 # ID Öğrenme kanalı
+ID_GUIDE_CHANNEL_ID = 1454803773527429121
 DB_FILE = "users_db.json"
 STREAM_URL = "https://www.twitch.tv/leux" 
 
@@ -32,14 +32,11 @@ SPECIAL_GAMES = {
 
 # --- YARDIMCI FONKSİYONLAR ---
 def load_db():
-    if not os.path.exists(DB_FILE):
-        return {"users": {}, "banned": []}
-    with open(DB_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    if not os.path.exists(DB_FILE): return {"users": {}, "banned": []}
+    with open(DB_FILE, "r", encoding="utf-8") as f: return json.load(f)
 
 def save_db(data):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4)
+    with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=4)
 
 def format_duration_detailed(seconds):
     if not seconds or seconds < 0: return "Bağlanıyor..."
@@ -62,24 +59,14 @@ db = load_db()
 active_sessions = {}
 
 # --- İŞLEM YÖNETİCİSİ ---
-def start_steam_bot(user_id, username, password, game_ids):
-    if not os.path.exists("steam_worker.py"):
-        print("[KRİTİK HATA] Worker dosyası bulunamadı!")
-        return
-    gids_str = ",".join(map(str, game_ids))
-    cmd = [sys.executable, "-u", "steam_worker.py", str(user_id), username, password, gids_str]
-    try:
-        process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', bufsize=1)
-        active_sessions[str(user_id)] = {"process": process, "last_msg": "Sunucuya bağlanılıyor...", "start_time": None}
-        threading.Thread(target=monitor_output, args=(str(user_id), process), daemon=True).start()
-    except Exception as e: print(f"[PROCESS ERROR] {e}")
-
 def monitor_output(user_id, process):
     while True:
         try:
             line = process.stdout.readline()
             if not line: break
             clean_line = line.strip()
+            print(f"[WORKER-{user_id}] {clean_line}")
+
             onay_kelimeleri = ["başarılı", "açıldı", "çalışıyor", "aktif", "ok"]
             if any(k in clean_line.lower() for k in onay_kelimeleri):
                 ts = int(time.time())
@@ -88,6 +75,7 @@ def monitor_output(user_id, process):
                 if user_id in db_int["users"] and db_int["users"][user_id].get("start_time") is None:
                     db_int["users"][user_id]["start_time"] = ts
                     save_db(db_int)
+
             if clean_line.startswith("{"):
                 try:
                     data = json.loads(clean_line)
@@ -96,13 +84,20 @@ def monitor_output(user_id, process):
                 except: pass
         except: break
 
+def start_steam_bot(user_id, username, password, game_ids):
+    gids_str = ",".join(map(str, game_ids))
+    cmd = [sys.executable, "-u", "steam_worker.py", str(user_id), username, password, gids_str]
+    try:
+        process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', bufsize=1)
+        active_sessions[str(user_id)] = {"process": process, "last_msg": "Sunucuya bağlanılıyor...", "start_time": None}
+        threading.Thread(target=monitor_output, args=(str(user_id), process), daemon=True).start()
+    except: pass
+
 def send_command_to_worker(user_id, command):
     if user_id in active_sessions:
         proc = active_sessions[user_id]["process"]
         if proc.poll() is None:
-            try:
-                proc.stdin.write(command + "\n"); proc.stdin.flush()
-                return True
+            try: proc.stdin.write(command + "\n"); proc.stdin.flush(); return True
             except: pass
     return False
 
@@ -120,12 +115,10 @@ class IDPaginationView(discord.ui.View):
         start = self.page * self.per_page
         end = start + self.per_page
         current_items = self.data[start:end]
-        
         embed = discord.Embed(title=f"🔍 '{self.query}' İçin Arama Sonuçları", color=0x3498db)
         for item in current_items:
             embed.add_field(name=item['name'], value=f"ID: `{item['id']}`", inline=False)
-        
-        embed.set_footer(text=f"Sayfa {self.page + 1}/{self.max_pages + 1} | ID'yi kopyalayıp /oyun_ekle ile kullanın.")
+        embed.set_footer(text=f"Sayfa {self.page + 1}/{self.max_pages + 1} | ID'yi /oyun_ekle ile kullanın.")
         return embed
 
     @discord.ui.button(label="⬅️ Geri", style=discord.ButtonStyle.gray)
@@ -133,16 +126,14 @@ class IDPaginationView(discord.ui.View):
         if self.page > 0:
             self.page -= 1
             await interaction.response.edit_message(embed=self.make_embed(), view=self)
-        else:
-            await interaction.response.defer()
+        else: await interaction.response.defer()
 
     @discord.ui.button(label="İleri ➡️", style=discord.ButtonStyle.gray)
     async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.page < self.max_pages:
             self.page += 1
             await interaction.response.edit_message(embed=self.make_embed(), view=self)
-        else:
-            await interaction.response.defer()
+        else: await interaction.response.defer()
 
 # --- ARAYÜZ ---
 class CodeModal(discord.ui.Modal, title="🔐 Güvenlik Doğrulaması"):
@@ -152,9 +143,8 @@ class CodeModal(discord.ui.Modal, title="🔐 Güvenlik Doğrulaması"):
     code = discord.ui.TextInput(label="Steam Guard Kodu", placeholder="Kodu buraya girin", max_length=10)
     async def on_submit(self, interaction: discord.Interaction):
         if send_command_to_worker(self.user_id, f"CODE:{self.code.value}"):
-            await interaction.response.send_message("✅ **Kod şifrelenerek sunucuya iletildi.**\nLütfen doğrulama işlemi için paneli yenileyin.", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ **Hata:** Aktif bir oturum bulunamadı.", ephemeral=True)
+            await interaction.response.send_message("✅ **Kod şifrelenerek sunucuya iletildi.**", ephemeral=True)
+        else: await interaction.response.send_message("❌ Hata.", ephemeral=True)
 
 class LoginCheckView(discord.ui.View):
     def __init__(self, user_id):
@@ -171,25 +161,28 @@ class LoginCheckView(discord.ui.View):
         if "KOD GEREKLİ" in st:
             self.children[0].disabled = False
             await interaction.response.edit_message(embed=discord.Embed(title="⚠️ Doğrulama Bekleniyor", description=st, color=0xf1c40f), view=self)
-        else: await interaction.response.edit_message(content=f"ℹ️ **Sistem Durumu:** `{st}`", view=self)
+        elif any(x in st.lower() for x in ["açıldı", "başarılı", "çalışıyor"]):
+            # İSTEĞİNİZ: Sisteme giriş yapıldığında bu mesajı gösterir
+            await interaction.response.edit_message(content="✅ **Sisteme giriş yapıldı, oyun başlatılıyor...**", view=None)
+        else: await interaction.response.edit_message(content=f"ℹ️ Durum: `{st}`", view=self)
 
 class LoginModal(discord.ui.Modal, title="☁️ Bulut Oturum Başlatma"):
-    username = discord.ui.TextInput(label="Kullanıcı Adı", placeholder="Steam kullanıcı adınızı girin")
-    password = discord.ui.TextInput(label="Şifre", placeholder="Güvenli giriş için şifreniz")
-    game_ids = discord.ui.TextInput(label="Oyun Yapılandırması (ID)", required=False, placeholder="Örn: 730, 440")
+    username = discord.ui.TextInput(label="Kullanıcı Adı")
+    password = discord.ui.TextInput(label="Şifre")
+    game_ids = discord.ui.TextInput(label="Oyun ID", required=False, placeholder="730, 440")
     async def on_submit(self, interaction: discord.Interaction):
         uid = str(interaction.user.id); db_int = load_db()
-        if uid in db_int["banned"]: await interaction.response.send_message("⛔ **Erişim Reddedildi.**", ephemeral=True); return
         gids = [int(x.strip()) for x in self.game_ids.value.split(",") if x.strip().isdigit()] if self.game_ids.value else [730]
         db_int["users"][uid] = {"username": self.username.value, "password": self.password.value, "games": gids, "start_time": None}
         save_db(db_int); start_steam_bot(uid, self.username.value, self.password.value, gids)
-        await interaction.response.send_message("🚀 **Sunucu Başlatılıyor...**", view=LoginCheckView(uid), ephemeral=True)
+        await interaction.response.send_message("🚀 Başlatılıyor...", view=LoginCheckView(uid), ephemeral=True)
 
 class MainView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="Bulut Oturumunu Başlat", style=discord.ButtonStyle.success, emoji="☁️", custom_id="login")
     async def login(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(LoginModal())
+        try: await interaction.response.send_modal(LoginModal())
+        except: pass
 
 class Bot(commands.Bot):
     def __init__(self):
@@ -209,24 +202,16 @@ class Bot(commands.Bot):
 
 bot = Bot()
 
-# --- TÜM KOMUTLAR ---
+# --- KOMUTLAR ---
 @bot.tree.command(name="idogren", description="Oyun ismini yazın, sonuçları listeleyelim.")
 async def idogren(interaction: discord.Interaction, sorgu: str):
     s_clean = sorgu.lower().strip()
-    
-    # 1. ÖZEL DURUMLAR (FiveM vb.)
     if s_clean in SPECIAL_GAMES:
-        await interaction.response.send_message(f"🎯 **Özel Tanımlama:** `{sorgu.upper()}` için gereken AppID: `{SPECIAL_GAMES[s_clean]}`", ephemeral=True)
+        await interaction.response.send_message(f"🎯 **Özel Tanımlama:** `{sorgu.upper()}` için gereken ID: `{SPECIAL_GAMES[s_clean]}`", ephemeral=True)
         return
-
-    # 2. LİNK KONTROLÜ
     if "store.steampowered.com/app/" in sorgu:
         match = re.search(r"app/(\d+)", sorgu)
-        if match:
-            await interaction.response.send_message(f"🔍 Linkten çıkarılan ID: `{match.group(1)}`", ephemeral=True)
-            return
-
-    # 3. STEAM ARAMA VE SAYFALAMA
+        if match: await interaction.response.send_message(f"🔍 ID: `{match.group(1)}`", ephemeral=True); return
     await interaction.response.defer(ephemeral=True)
     try:
         search_url = f"https://store.steampowered.com/api/storesearch/?term={sorgu}&l=turkish&cc=TR"
@@ -236,21 +221,21 @@ async def idogren(interaction: discord.Interaction, sorgu: str):
                 if data and data.get("items"):
                     view = IDPaginationView(data["items"], sorgu)
                     await interaction.followup.send(embed=view.make_embed(), view=view, ephemeral=True)
-                else:
-                    await interaction.followup.send(f"❌ '{sorgu}' bulunamadı. Lütfen tam adını deneyin.", ephemeral=True)
-    except:
-        await interaction.followup.send("⚠️ Hata oluştu.", ephemeral=True)
+                else: await interaction.followup.send(f"❌ '{sorgu}' bulunamadı.", ephemeral=True)
+    except: await interaction.followup.send("⚠️ Hata.", ephemeral=True)
 
-@bot.tree.command(name="liste", description="Oturum detaylarını ve istatistikleri gösterir.")
+@bot.tree.command(name="liste", description="Oturum detaylarını gösterir.")
 async def liste(interaction: discord.Interaction):
-    if not check_channel(interaction): await interaction.response.send_message(f"🚫 Sadece <#{CMD_CHANNEL_ID}> kanalında çalışır.", ephemeral=True); return
+    if interaction.channel_id != CMD_CHANNEL_ID: return
     uid = str(interaction.user.id); sess = active_sessions.get(uid); db_i = load_db()
     st = sess["start_time"] if sess and sess.get("start_time") else db_i["users"].get(uid, {}).get("start_time")
     games = db_i["users"].get(uid, {}).get("games", [])
     if not sess and not st: await interaction.response.send_message("❌ Aktif oturum yok.", ephemeral=True); return
     t_str = format_duration_detailed(time.time() - st) if st else "Bağlanıyor..."
     desc = "```ansi\n\u001b[1;36m ID      | DURUM  | ZAMAN\u001b[0m\n\u001b[0;30m---------+--------+------------------\u001b[0m\n"
-    for gid in games: desc += f" {str(gid).ljust(7)} | \u001b[1;32mAktif\u001b[0m  | {t_str}\n"
+    if games:
+        for gid in games: desc += f" {str(gid).ljust(7)} | \u001b[1;32mAktif\u001b[0m  | {t_str}\n"
+    else: desc += " OYUN YOK | DURDURULDU | -\n"
     desc += "```"
     embed = discord.Embed(title="📊 Bulut Oturum Paneli", color=0xe91e63)
     embed.add_field(name="🎮 Aktif İşlemler", value=desc, inline=False)
@@ -258,30 +243,27 @@ async def liste(interaction: discord.Interaction):
     embed.add_field(name="👤 Kullanıcı", value=f"`{db_i['users'].get(uid, {}).get('username', 'Bilinmiyor')}`", inline=True)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="oyun_ekle", description="Mevcut oturumunuza yeni bir oyun ekler.")
+@bot.tree.command(name="oyun_ekle", description="Yeni oyun ekler.")
 async def oyun_ekle(interaction: discord.Interaction, appid: int):
     uid = str(interaction.user.id); db_i = load_db()
-    if uid not in db_i["users"]: await interaction.response.send_message("❌ Kayıt bulunamadı.", ephemeral=True); return
+    if uid not in db_i["users"]: return
     if appid not in db_i["users"][uid]["games"]:
         db_i["users"][uid]["games"].append(appid); save_db(db_i)
         send_command_to_worker(uid, f"UPDATE:{','.join(map(str, db_i['users'][uid]['games']))}")
-        await interaction.response.send_message(f"✅ **{appid}** başarıyla eklendi.", ephemeral=True)
+        await interaction.response.send_message(f"✅ **{appid}** eklendi.", ephemeral=True)
 
-@bot.tree.command(name="oyun_cikar", description="Listenizden oyun çıkartır.")
+@bot.tree.command(name="oyun_cikar", description="Oyun çıkarır.")
 async def oyun_cikar(interaction: discord.Interaction, appid: int):
     uid = str(interaction.user.id); db_i = load_db()
     if uid in db_i["users"] and appid in db_i["users"][uid]["games"]:
         db_i["users"][uid]["games"].remove(appid); save_db(db_i)
-        send_command_to_worker(uid, f"UPDATE:{','.join(map(str, db_i['users'][uid]['games']))}")
-        await interaction.response.send_message(f"🗑️ **{appid}** başarıyla çıkarıldı.", ephemeral=True)
+        # İSTEĞİNİZ: Tüm oyunlar çıkarıldığında oyun oynamayı tamamen kapatır
+        gids_str = ",".join(map(str, db_i['users'][uid]['games'])) if db_i['users'][uid]['games'] else "NONE"
+        send_command_to_worker(uid, f"UPDATE:{gids_str}")
+        msg = f"🗑️ **{appid}** çıkarıldı." if gids_str != "NONE" else f"🗑️ **{appid}** çıkarıldı. Liste boş, tüm oyunlar kapatıldı."
+        await interaction.response.send_message(msg, ephemeral=True)
 
-@bot.tree.command(name="durum", description="Anlık process durumunu gösterir.")
-async def durum(interaction: discord.Interaction):
-    uid = str(interaction.user.id); sess = active_sessions.get(uid)
-    if not sess: await interaction.response.send_message("❌ Aktif değilsin.", ephemeral=True); return
-    await interaction.response.send_message(embed=discord.Embed(description=f"📝 **Log:** `{sess['last_msg']}`", color=0x95a5a6), ephemeral=True)
-
-@bot.tree.command(name="cikis", description="Oturumu kapatır.")
+@bot.tree.command(name="cikis", description="Kapatır.")
 async def cikis(interaction: discord.Interaction):
     uid = str(interaction.user.id)
     if uid in active_sessions:
@@ -289,12 +271,9 @@ async def cikis(interaction: discord.Interaction):
         db_i = load_db(); db_i["users"][uid]["start_time"] = None; save_db(db_i)
         await interaction.response.send_message("👋 Oturum kapatıldı.", ephemeral=True)
 
-def check_channel(interaction): return interaction.channel_id == CMD_CHANNEL_ID
-
 @bot.event
 async def on_ready():
     print(f"{bot.user} Hazır.")
-    # Ana Bilgi Kanalı
     ch = bot.get_channel(INFO_CHANNEL_ID)
     if ch:
         try:
@@ -306,8 +285,6 @@ async def on_ready():
             embed.set_thumbnail(url="https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/2048px-Steam_icon_logo.svg.png")
             await ch.send(embed=embed, view=MainView())
         except: pass
-    
-    # ID Öğrenme Kanalı
     g_ch = bot.get_channel(ID_GUIDE_CHANNEL_ID)
     if g_ch:
         try:
